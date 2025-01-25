@@ -117,10 +117,10 @@ func Test_allocateResources(t *testing.T) {
 
 // Test_WritePage tests the WritePage method of the DiskManager struct.
 // It includes two sub-tests:
-// 1. "No Database directory exists" checks that an error is returned when trying to write a page
-//    without a valid database directory, expecting the errSeekingFile error.
-// 2. "Database directory exists" verifies that when a valid database directory is present,
-//    the page is written successfully without errors.
+//  1. "No Database directory exists" checks that an error is returned when trying to write a page
+//     without a valid database directory, expecting the errSeekingFile error.
+//  2. "Database directory exists" verifies that when a valid database directory is present,
+//     the page is written successfully without errors.
 func Test_WritePage(t *testing.T) {
 	t.Run("No Database directory exists", func(t *testing.T) {
 		disk_manager := NewDiskManager()
@@ -149,20 +149,58 @@ func Test_WritePage(t *testing.T) {
 
 // Test_WriteMetaData tests the WriteMetaData method of the MetaData struct.
 // It includes a sub-test:
-// 1. "No Database directory exists" checks that an error is returned when trying to write
-//    metadata without a valid database directory, expecting the errSeekingFile error.
+//  1. "No Database directory exists" checks that an error is returned when trying to write
+//     metadata without a valid database directory, expecting the errSeekingFile error.
 func Test_WriteMetaData(t *testing.T) {
-	t.Run("No Database directory exists", func(t *testing.T) {
-		disk_manager := NewDiskManager()
-		metadata := NewMetaData()
+	disk_manager := NewDiskManager()
+	metadata := NewMetaData()
 
+	table := &Table{
+		Name:    "users",
+		Columns: []Column{{Name: "id", DataType: Int}, {Name: "name", DataType: String}},
+	}
+
+	err := metadata.WriteMetaData(table, disk_manager)
+
+	assert.Equal(t, err, errSeekingFile)
+}
+
+// Test_WriteCreateTableLog tests the WriteCreateTableLog method of the TransactionLog struct.
+// It includes two sub-tests:
+//  1. "No file exists" checks that an error is returned when trying to write a create table log
+//     to a non-existent file, expecting the errWritingLog error.
+//  2. "file exists" checks that writing a create table log to an existing file succeeds.
+func Test_WriteCreateTableLog(t *testing.T) {
+	t.Run("No file exists", func(t *testing.T) {
+		disk_manager := NewDiskManager()
 		table := &Table{
 			Name:    "users",
 			Columns: []Column{{Name: "id", DataType: Int}, {Name: "name", DataType: String}},
 		}
 
-		err := metadata.WriteMetaData(table, disk_manager)
+		log := NewTransactionLog()
 
-		assert.Equal(t, err, errSeekingFile)
+		err := log.WriteCreateTableLog(table, disk_manager)
+
+		assert.Equal(t, err, errWritingLog)
+	})
+
+	t.Run("file exists", func(t *testing.T) {
+		err := os.MkdirAll("database", 0755)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll("database")
+
+		disk_manager := NewDiskManager()
+		table := &Table{
+			Name:    "users",
+			Columns: []Column{{Name: "id", DataType: Int}, {Name: "name", DataType: String}},
+		}
+		log := NewTransactionLog()
+
+		err = log.WriteCreateTableLog(table, disk_manager)
+
+		assert.Nil(t, err)
 	})
 }
