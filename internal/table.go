@@ -220,6 +220,9 @@ var (
 	errInvalidDataType    = errors.New("invalid data type")
 	errTableAlreadyExists = errors.New("table already exists")
 	ErrResourceAllocation = errors.New("resource allocation failed")
+	errInvalidColumnName  = errors.New("column name cannot be empty")
+	errColumnNameTooShort = errors.New("column name must be at least 3 characters long")
+	errColumnNameTooLong  = errors.New("column name must be at most 64 characters long")
 )
 
 // ValidateTable checks if the table name is valid and the columns are valid.
@@ -237,7 +240,7 @@ func (t *Table) ValidateTable(m *MetaData, d *DiskManager) error {
 		return errTableNameEmpty
 	}
 
-	if len(t.Name) < 3 {
+	if len(t.Name) < 2 {
 		return errTableNameTooShort
 	}
 
@@ -251,6 +254,18 @@ func (t *Table) ValidateTable(m *MetaData, d *DiskManager) error {
 
 	columnNames := make(map[string]bool)
 	for _, column := range t.Columns {
+		if column.Name == "" {
+			return errInvalidColumnName
+		}
+
+		if len(column.Name) < 2 {
+			return errColumnNameTooShort
+		}
+
+		if len(column.Name) > 64 {
+			return errColumnNameTooLong
+		}
+
 		if _, exists := columnNames[column.Name]; exists {
 			return errDuplicateColumn
 		}
@@ -287,7 +302,8 @@ func (t *Table) allocateResources(d *DiskManager, p *Page) error {
 	}
 
 	if err := d.WritePage(*page); err != nil {
-		return fmt.Errorf("%w: failed to write initial page", ErrResourceAllocation)
+		fmt.Printf("Error writing page: %v\n", err)
+		return ErrResourceAllocation
 	}
 
 	pageDir.pages[page.ID] = page
@@ -310,10 +326,17 @@ func (t *Table) cleanup(d *DiskManager) {
 	}
 }
 
-// DeletePage deletes a page from the disk. It does not return an error.
+// DeletePage deletes a page from the disk.
 func (d *DiskManager) DeletePage(page Page) error {
 	return nil
 }
+
+var (
+	errInvalidPageSize = errors.New("invalid page Size")
+	errSeekingFile     = errors.New("seeking failed, invalid argument")
+	errWritingFile     = errors.New("error writing to the file")
+	errPartialWrite    = errors.New("partial data was written and error occurred")
+)
 
 // WritePage writes the given page's data to the data file associated with the DiskManager.
 // It ensures that the page data size matches the expected page size, seeks to the correct
@@ -322,21 +345,25 @@ func (d *DiskManager) DeletePage(page Page) error {
 // does not match the page size. The function also syncs the data file to ensure data integrity.
 func (d *DiskManager) WritePage(page Page) error {
 	if len(page.Data) != int(d.PageSize) {
-		return fmt.Errorf("invalid page size: expected %d, got %d", d.PageSize, len(page.Data))
+		fmt.Printf("invalid page size: expected %d, got %d", d.PageSize, len(page.Data))
+		return errInvalidPageSize
 	}
 
 	offset := page.ID * d.PageSize
 	if _, err := d.DataFile.Seek(int64(offset), io.SeekStart); err != nil {
-		return fmt.Errorf("seek error: %w", err)
+		fmt.Printf("error seeking file %v\n", err)
+		return errSeekingFile
 	}
 
 	written, err := d.DataFile.Write(page.Data)
 	if err != nil {
-		return fmt.Errorf("write error: %w", err)
+		fmt.Printf("write error: %v", err)
+		return errWritingFile
 	}
 
 	if written != int(d.PageSize) {
-		return fmt.Errorf("partial write: wrote %d of %d bytes", written, d.PageSize)
+		fmt.Printf("partial write: wrote %d of %d bytes", written, d.PageSize)
+		return errPartialWrite
 	}
 
 	return d.DataFile.Sync()
@@ -373,7 +400,7 @@ func (l *TransactionLog) writeCreateTableLogWithRetry(t *Table, d *DiskManager, 
 func (m *MetaData) WriteMetaData(t *Table, d *DiskManager) error {
 	_, err := d.MetaDataFile.Seek(0, io.SeekEnd)
 	if err != nil {
-		return err
+		return errSeekingFile
 	}
 
 	writtenBytesCount, err := d.MetaDataFile.WriteString(fmt.Sprintf(
