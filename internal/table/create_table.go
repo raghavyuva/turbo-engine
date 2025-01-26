@@ -4,127 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
-
-type Page struct {
-	ID       uint64
-	Size     uint64
-	NextPage uint64
-	IsDirty  bool
-	Data     []byte
-	PinCount int
-}
-
-func NewPage() *Page {
-	return &Page{
-		ID:       0,
-		Size:     4096,
-		NextPage: 0,
-		IsDirty:  false,
-		Data:     make([]byte, 4096),
-		PinCount: 0,
-	}
-}
-
-type PageDirectory struct {
-	tableID uuid.UUID
-	pages   map[uint64]*Page
-}
-
-type ActionType int
-
-const (
-	CREATE ActionType = iota
-	INSERT
-	UPDATE
-	DELETE
-)
-
-type TransactionLog struct {
-	ID         uint64
-	Data       []byte
-	Timestamp  time.Time
-	ActionType ActionType
-}
-
-func NewTransactionLog() *TransactionLog {
-	return &TransactionLog{
-		ID:         0,
-		Data:       nil,
-		Timestamp:  time.Now(),
-		ActionType: CREATE,
-	}
-}
-
-type DataTypes int
-
-const (
-	Int DataTypes = iota
-	String
-	Bool
-)
-
-type Column struct {
-	Name     string
-	DataType DataTypes
-}
-
-type DiskManager struct {
-	PageSize     uint64
-	DataFile     *os.File
-	MetaDataFile *os.File
-	LogFile      *os.File
-}
-
-func NewDiskManager() *DiskManager {
-	dataFile, _ := os.OpenFile("./database/data.db", os.O_CREATE|os.O_RDWR, 0666)
-	metadataFile, _ := os.OpenFile("./database/metadata.db", os.O_CREATE|os.O_RDWR, 0666)
-	logFile, _ := os.OpenFile("./database/transaction_log.db", os.O_CREATE|os.O_RDWR, 0666)
-	return &DiskManager{
-		PageSize:     4096,
-		DataFile:     dataFile,
-		MetaDataFile: metadataFile,
-		LogFile:      logFile,
-	}
-}
-
-type MetaData struct {
-	Tables []*Table
-}
-
-func NewMetaData() *MetaData {
-	return &MetaData{
-		Tables: []*Table{},
-	}
-}
-
-type Table struct {
-	ID            uuid.UUID
-	Name          string
-	Columns       []Column
-	Size          uint64
-	RowsCount     uint64
-	pageDirectory *PageDirectory
-
-	sync.RWMutex // to lock the table
-	isLocked     bool
-}
-
-type RetryConf struct {
-	MaxRetries int
-	Interval   time.Duration
-}
-
-func NewRetryConf(maxRetries int, interval time.Duration) *RetryConf {
-	return &RetryConf{MaxRetries: maxRetries, Interval: interval}
-}
 
 // Name Setter method for Table struct
 func (t *Table) SetName(name string) {
@@ -173,6 +58,9 @@ func (t *Table) CreateTable(name string, columns []Column, m *MetaData, d *DiskM
 	if len(columns) == 0 {
 		columns = t.Columns
 	}
+
+	t.SetName(name)
+	t.SetColumns(columns)
 	t.SetRowsCount(0)
 	t.SetSize(0)
 
@@ -183,6 +71,8 @@ func (t *Table) CreateTable(name string, columns []Column, m *MetaData, d *DiskM
 	}
 
 	id := t.GenerateID()
+	t.ID = id
+
 	fmt.Printf("Creating table %s\n with columns %v having id %s", name, columns, id.String())
 
 	r := NewRetryConf(3, 5*time.Second)
@@ -404,8 +294,8 @@ func (m *MetaData) WriteMetaData(t *Table, d *DiskManager) error {
 	}
 
 	writtenBytesCount, err := d.MetaDataFile.WriteString(fmt.Sprintf(
-		"Table: %s\nColumns: %v\nSize: %d\nRowsCount: %d\n",
-		t.Name, t.Columns, t.Size, t.RowsCount))
+		"Table: %s\nColumns: %v\nSize: %d\nRowsCount: %d\nID: %s\n",
+		t.Name, t.Columns, t.Size, t.RowsCount, t.ID))
 	if err != nil {
 		return errWritingMetaData
 	}
@@ -501,7 +391,7 @@ func (l *TransactionLog) WriteCreateTableLog(t *Table, d *DiskManager) error {
 	if err != nil {
 		return errWritingLog
 	}
-	writtenBytesCount, err := d.LogFile.Write([]byte(fmt.Sprintf("Table: %s\nColumns: %v\nSize: %d\nRowsCount: %d\nType: %s\n", t.Name, t.Columns, t.Size, t.RowsCount, "CREATE")))
+	writtenBytesCount, err := d.LogFile.Write([]byte(fmt.Sprintf("ID: %s\nTable: %s\nColumns: %v\nSize: %d\nRowsCount: %d\nType: %s\n", t.ID, t.Name, t.Columns, t.Size, t.RowsCount, "CREATE")))
 	if err != nil {
 		fmt.Printf("Error writing log : %v\n", err)
 		return errWritingLog
