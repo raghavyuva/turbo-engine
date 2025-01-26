@@ -128,8 +128,13 @@ func NewRetryConf(maxRetries int, interval time.Duration) *RetryConf {
 
 type AlterTable struct {
 	Name                   string
-	DeletedColumns         []Column
+	DeletedColumns         []string
 	AddedColumns           []Column
-	RenamedColumns         []Column
+	RenamedColumns         []RenamedColumns
 	UpdatedColumnDataTypes []Column
+}
+
+type RenamedColumns struct {
+	OldName string
+	NewName string
 }

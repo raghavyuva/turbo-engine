@@ -366,6 +366,20 @@ func (m *MetaData) isTableExists(name string, d *DiskManager) bool {
 	return false
 }
 
+func (m *MetaData) isColumnExists(name string, d *DiskManager) bool {
+	metadata, err := m.ReadMetaData(d)
+	if err != nil {
+		return false
+	}
+
+	for _, column := range metadata["Columns"].([]string) {
+		if column == name {
+			return true
+		}
+	}
+	return false
+}
+
 // RetryWriteMetaData retries writing the table's metadata, including its name, columns, size,
 // and row count, to the metadata file associated with the provided DiskManager up to the
 // number of times specified in the RetryConf. If all retries fail, it returns an error.
