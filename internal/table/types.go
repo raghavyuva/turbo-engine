@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type Page struct {
@@ -33,8 +34,6 @@ type PageDirectory struct {
 	pages   map[uint64]*Page
 }
 
-type ActionType int
-
 const (
 	CREATE ActionType = iota
 	INSERT
@@ -42,18 +41,11 @@ const (
 	DELETE
 )
 
-type TransactionLog struct {
-	ID         uint64
-	Data       []byte
-	Timestamp  time.Time
-	ActionType ActionType
-}
-
 func NewTransactionLog() *TransactionLog {
 	return &TransactionLog{
-		ID:         0,
+		Id:         0,
 		Data:       nil,
-		Timestamp:  time.Now(),
+		Timestamp:  timestamppb.New(time.Now()),
 		ActionType: CREATE,
 	}
 }
@@ -83,10 +75,16 @@ type DiskManager struct {
 	LogFile      *os.File
 }
 
+var (
+	dataFileName     = "./database/data.db"
+	metadataFileName = "./database/metadata.db"
+	logFileName      = "./database/transaction_log.db"
+)
+
 func NewDiskManager() *DiskManager {
-	dataFile, _ := os.OpenFile("./database/data.db", os.O_CREATE|os.O_RDWR, 0666)
-	metadataFile, _ := os.OpenFile("./database/metadata.db", os.O_CREATE|os.O_RDWR, 0666)
-	logFile, _ := os.OpenFile("./database/transaction_log.db", os.O_CREATE|os.O_RDWR, 0666)
+	dataFile, _ := os.OpenFile(dataFileName, os.O_CREATE|os.O_RDWR, 0666)
+	metadataFile, _ := os.OpenFile(metadataFileName, os.O_CREATE|os.O_RDWR, 0666)
+	logFile, _ := os.OpenFile(logFileName, os.O_CREATE|os.O_RDWR, 0666)
 	return &DiskManager{
 		PageSize:     4096,
 		DataFile:     dataFile,
@@ -95,12 +93,12 @@ func NewDiskManager() *DiskManager {
 	}
 }
 
-type MetaData struct {
+type TableMetadata struct {
 	Tables []*Table
 }
 
-func NewMetaData() *MetaData {
-	return &MetaData{
+func NewMetaData() *TableMetadata {
+	return &TableMetadata{
 		Tables: []*Table{},
 	}
 }

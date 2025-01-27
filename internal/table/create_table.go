@@ -1,14 +1,15 @@
 package internal
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
-	"strconv"
-	"strings"
-	"time"
-
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"io"
+	"math/rand"
+	"time"
 )
 
 // Name Setter method for Table struct
@@ -39,13 +40,14 @@ func (t *Table) GenerateID() uuid.UUID {
 var (
 	errWritingMetaData = errors.New("error writing metadata")
 	errWritingLog      = errors.New("error writing log")
+	errEncodingLog     = errors.New("error while encoding the log")
 )
 
 // CreateTable creates a table with the given name and columns, and writes the
 // corresponding metadata and log entries. If the name is empty, the table's
 // name is used. If the columns slice is empty, the table's columns are used.
 // The method returns an error if writing the metadata , log fails or if the table is invalid.
-func (t *Table) CreateTable(name string, columns []Column, m *MetaData, d *DiskManager, l *TransactionLog, p *Page) error {
+func (t *Table) CreateTable(name string, columns []Column, m *TableMetadata, d *DiskManager, l *TransactionLog, p *Page) error {
 	t.isLocked = true
 	t.RWMutex.Lock()
 	defer t.RWMutex.Unlock()
@@ -119,9 +121,9 @@ var (
 // It returns an error if the table name is empty, too short, or too long,
 // or if the columns are empty, or if there are duplicate column names,
 // or if a column data type is empty, or if the data type is invalid.
-func (t *Table) ValidateTable(m *MetaData, d *DiskManager) error {
+func (t *Table) ValidateTable(m *TableMetadata, d *DiskManager) error {
 	exists := m.isTableExists(t.Name, d)
-
+	fmt.Printf("Table exists: %v\n", exists)
 	if exists {
 		return errTableAlreadyExists
 	}
@@ -264,7 +266,7 @@ func (d *DiskManager) WritePage(page Page) error {
 // attempts to write the metadata using WriteMetaData. If it fails, it retries
 // the operation up to the number of times specified in the RetryConf using
 // RetryWriteMetaData. It returns an error if all retries fail.
-func (m *MetaData) writeMetaDataWithRetry(t *Table, d *DiskManager, r *RetryConf) error {
+func (m *TableMetadata) writeMetaDataWithRetry(t *Table, d *DiskManager, r *RetryConf) error {
 	err := m.WriteMetaData(t, d)
 	if err != nil {
 		return m.RetryWriteMetaData(t, d, r)
@@ -284,97 +286,139 @@ func (l *TransactionLog) writeCreateTableLogWithRetry(t *Table, d *DiskManager, 
 	return nil
 }
 
-// WriteMetaData writes the table's metadata to the metadata file
-// associated with the provided DiskManager. It appends the metadata to
-// the file, and returns an error if writing to the file fails.
-func (m *MetaData) WriteMetaData(t *Table, d *DiskManager) error {
+// WriteMetaData writes the table's metadata to the metadata file associated with the
+// provided DiskManager. It writes the table's ID, name, columns, size, and row count
+// to the file in the format specified in TableFormat. It returns an error if writing
+// to the file fails.
+func (m *TableMetadata) WriteMetaData(t *Table, d *DiskManager) error {
 	_, err := d.MetaDataFile.Seek(0, io.SeekEnd)
 	if err != nil {
 		return errSeekingFile
 	}
 
-	writtenBytesCount, err := d.MetaDataFile.WriteString(fmt.Sprintf(
-		"Table: %s\nColumns: %v\nSize: %d\nRowsCount: %d\nID: %s\n",
-		t.Name, t.Columns, t.Size, t.RowsCount, t.ID))
+	columnFormats := make([]*ColumnFormat, len(t.Columns))
+	for i, col := range t.Columns {
+		columnFormats[i] = &ColumnFormat{
+			Name:     col.Name,
+			DataType: DataTypesFormat(col.DataType),
+		}
+	}
+
+	metadata := &TableFormat{
+		Id:        t.ID.String(),
+		Name:      t.Name,
+		Columns:   columnFormats,
+		Size:      t.Size,
+		RowsCount: t.RowsCount,
+	}
+
+	data, err := proto.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+
+	buf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buf, uint32(len(data)))
+	if _, err := d.MetaDataFile.Write(buf); err != nil {
+		return err
+	}
+
+	writtenBytesCount, err := d.MetaDataFile.Write(data)
 	if err != nil {
 		return errWritingMetaData
 	}
-
 	fmt.Printf("Wrote %d bytes to metadata file\n", writtenBytesCount)
 	return nil
 }
 
-// ReadMetaData reads the metadata from the file associated with the provided DiskManager,
-// and returns the metadata as a map of string keys to interface{} values.
-// The map contains the following keys: "Name", "Columns", "Size", and "RowsCount".
-// The values are the corresponding values from the metadata file, converted to
-// Go values according to the following rules:
-// - "Size" and "RowsCount" are converted to int.
-// - "Columns" is split into a slice of strings.
-// - Other keys are left as strings.
-// If there is an error reading the metadata file, it returns an error.
-func (m *MetaData) ReadMetaData(d *DiskManager) (map[string]interface{}, error) {
-	metadata := make([]byte, 1024)
-	n, err := d.MetaDataFile.Read(metadata)
-	if err != nil {
-		return nil, err
-	}
+// ReadMetaData reads the table metadata from the metadata file associated with
+// the provided DiskManager. It iterates over the file, reading each table's
+// metadata and unmarshalling it into a TableFormat object. Each valid table's
+// metadata is converted into a map with keys "Name", "Size", "RowsCount", and
+// "Columns", and added to a slice of maps. If no valid table metadata is found,
+// it returns an error. If reading from the file fails, it returns an error.
+func (m *TableMetadata) ReadMetaData(d *DiskManager) ([]map[string]interface{}, error) {
+	var offset int64
+	tables := make([]map[string]interface{}, 0)
 
-	result := make(map[string]interface{})
-	lines := strings.Split(string(metadata[:n]), "\n")
-
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, ": ", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		key := parts[0]
-		value := parts[1]
-
-		switch key {
-		case "Size", "RowsCount":
-			if v, err := strconv.Atoi(value); err == nil {
-				result[key] = v
+	for {
+		buf := make([]byte, 4)
+		if _, err := d.MetaDataFile.ReadAt(buf, offset); err != nil {
+			if err == io.EOF {
+				break
 			}
-		case "Columns":
-			result[key] = strings.Split(strings.Trim(value, "[]"), " ")
-		default:
-			result[key] = value
+			return nil, err
 		}
+		itemSize := binary.LittleEndian.Uint32(buf)
+		offset += 4
+
+		item := make([]byte, itemSize)
+		if _, err := d.MetaDataFile.ReadAt(item, offset); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+
+		tableFormat := &TableFormat{}
+		err := proto.Unmarshal(item, tableFormat)
+		if err != nil {
+			offset += int64(itemSize)
+			continue
+		}
+
+		result := make(map[string]interface{})
+		result["Name"] = tableFormat.Name
+		result["Size"] = int(tableFormat.Size)
+		result["RowsCount"] = int(tableFormat.RowsCount)
+
+		columns := make([]string, len(tableFormat.Columns))
+		for i, col := range tableFormat.Columns {
+			columns[i] = col.Name
+		}
+		result["Columns"] = columns
+
+		tables = append(tables, result)
+		offset += int64(itemSize)
 	}
 
-	return result, nil
+	if len(tables) == 0 {
+		return nil, fmt.Errorf("no valid table metadata found")
+	}
+
+	return tables, nil
 }
 
-// isTableExists checks if a table with the given name exists in the metadata file
-// associated with the provided DiskManager. It returns true if the table exists,
-// and false otherwise. If there is an error reading the metadata file, it returns
-// false.
-func (m *MetaData) isTableExists(name string, d *DiskManager) bool {
+// isTableExists checks if a table with the given name exists in the metadata.
+// It reads the metadata using the provided DiskManager and returns true if
+// a table with the specified name is found, or false otherwise. If an error
+// occurs while reading metadata, it returns false.
+func (m *TableMetadata) isTableExists(name string, d *DiskManager) bool {
 	metadata, err := m.ReadMetaData(d)
 	if err != nil {
 		return false
 	}
 
-	if metadata["Table"] == name {
-		return true
+	for _, table := range metadata {
+		if table["Name"] == name {
+			return true
+		}
 	}
 	return false
 }
 
-func (m *MetaData) isColumnExists(name string, d *DiskManager) bool {
+func (m *TableMetadata) isColumnExists(name string, d *DiskManager) bool {
 	metadata, err := m.ReadMetaData(d)
 	if err != nil {
 		return false
 	}
 
-	for _, column := range metadata["Columns"].([]string) {
-		if column == name {
-			return true
+	for _, table := range metadata {
+		columns := table["Columns"].([]string)
+		for _, column := range columns {
+			if column == name {
+				return true
+			}
 		}
 	}
 	return false
@@ -383,7 +427,7 @@ func (m *MetaData) isColumnExists(name string, d *DiskManager) bool {
 // RetryWriteMetaData retries writing the table's metadata, including its name, columns, size,
 // and row count, to the metadata file associated with the provided DiskManager up to the
 // number of times specified in the RetryConf. If all retries fail, it returns an error.
-func (m *MetaData) RetryWriteMetaData(t *Table, d *DiskManager, r *RetryConf) error {
+func (m *TableMetadata) RetryWriteMetaData(t *Table, d *DiskManager, r *RetryConf) error {
 	start := time.Now()
 	count := 0
 	for time.Since(start) < r.Interval*time.Duration(r.MaxRetries) {
@@ -397,19 +441,37 @@ func (m *MetaData) RetryWriteMetaData(t *Table, d *DiskManager, r *RetryConf) er
 	return errWritingMetaData
 }
 
-// WriteCreateTableLog writes the create table log to the log file
-// It appends the table name, columns, size and rows count to the log file
-// and returns an error if there is an error while writing to the log file
+// WriteCreateTableLog writes the create table log to the log file associated with the
+// provided DiskManager. It appends the log to the file, and returns an error if
+// writing to the file fails. The log contains the table's ID, name, columns, size,
+// and row count, as well as a timestamp and the create action type.
 func (l *TransactionLog) WriteCreateTableLog(t *Table, d *DiskManager) error {
 	_, err := d.LogFile.Seek(0, io.SeekEnd)
 	if err != nil {
 		return errWritingLog
 	}
-	writtenBytesCount, err := d.LogFile.Write([]byte(fmt.Sprintf("ID: %s\nTable: %s\nColumns: %v\nSize: %d\nRowsCount: %d\nType: %s\n", t.ID, t.Name, t.Columns, t.Size, t.RowsCount, "CREATE")))
+
+	log := &TransactionLog{
+		Id:         l.generateTransactionLogId(),
+		Data:       []byte(fmt.Sprintf("ID: %s\nTable: %s\nColumns: %v\nSize: %d\nRowsCount: %d\n", t.ID, t.Name, t.Columns, t.Size, t.RowsCount)),
+		Timestamp:  timestamppb.New(time.Now()),
+		ActionType: CREATE,
+	}
+
+	data, err := proto.Marshal(log)
+
+	if err != nil {
+		fmt.Printf("Error encoding log : %v\n", err)
+		return errEncodingLog
+	}
+
+	writtenBytesCount, err := d.LogFile.Write(data)
+
 	if err != nil {
 		fmt.Printf("Error writing log : %v\n", err)
 		return errWritingLog
 	}
+
 	fmt.Printf("Wrote %d bytes to log file\n", writtenBytesCount)
 	return nil
 }
@@ -429,4 +491,14 @@ func (l *TransactionLog) RetryWriteCreateTableLog(t *Table, d *DiskManager, r *R
 		time.Sleep(r.Interval)
 	}
 	return errWritingLog
+}
+
+// generateTransactionLogId generates a unique transaction log ID by seeding
+// the random number generator with the current time and returning a randomly
+// generated uint64 value. This ensures that each transaction log ID is
+// distinct.
+func (l *TransactionLog) generateTransactionLogId() uint64 {
+	rand.Seed(time.Now().UnixNano())
+	randomUint64 := rand.Uint64()
+	return randomUint64
 }

@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+package internal;
+
+option go_package = "github.com/raghavyuva/turbo-engine/internal";
+
+message TableFormat {
+	string id = 1;
+	string name = 2;
+	repeated ColumnFormat columns = 3;
+	uint64 size = 4;
+	uint64 rows_count = 5;
+}
+
+message ColumnFormat {
+	string name = 1;
+	DataTypesFormat data_type = 2;
+	bool is_nullable = 3;
+	bool is_primary_key = 4;
+	bool is_unique = 5;
+	bool is_auto_increment = 6;
+	string default_value = 7;
+}
+
+enum DataTypesFormat {
+	UnknownDataTypes = 0;
+	Int = 1;
+	String = 2;
+	Bool = 3;
+}
