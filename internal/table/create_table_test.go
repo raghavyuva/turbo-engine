@@ -160,7 +160,7 @@ func Test_WriteMetaData(t *testing.T) {
 		Columns: []Column{{Name: "id", DataType: Int}, {Name: "name", DataType: String}},
 	}
 
-	err := metadata.WriteMetaData(table, disk_manager)
+	err := metadata.WriteCreateTableMetaData(table, disk_manager)
 
 	assert.Equal(t, err, errSeekingFile)
 }

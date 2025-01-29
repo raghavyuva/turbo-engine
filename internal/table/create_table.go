@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+// ------- Table Setters --------
+
 // Name Setter method for Table struct
 func (t *Table) SetName(name string) {
 	t.Name = name
@@ -37,11 +39,15 @@ func (t *Table) GenerateID() uuid.UUID {
 	return uuid.New()
 }
 
+// Errors for the table creation
+
 var (
 	errWritingMetaData = errors.New("error writing metadata")
 	errWritingLog      = errors.New("error writing log")
 	errEncodingLog     = errors.New("error while encoding the log")
 )
+
+// Creating a table
 
 // CreateTable creates a table with the given name and columns, and writes the
 // corresponding metadata and log entries. If the name is empty, the table's
@@ -102,7 +108,8 @@ func (t *Table) CreateTable(name string, columns []Column, m *TableMetadata, d *
 	return nil
 }
 
-// error messages for table validation
+// --------------------------------------------------------------------------Errors for the table validation-------------------------------------------
+
 var (
 	errTableNameEmpty     = errors.New("table name cannot be empty")
 	errColumnsEmpty       = errors.New("columns cannot be empty")
@@ -174,6 +181,8 @@ func (t *Table) ValidateTable(m *TableMetadata, d *DiskManager) error {
 func (p *Page) GeneratePageID() uint64 {
 	return 0
 }
+
+// ------------------------------------------------------------------Resource Allocation and Rollback ------------------------------------------------------------------
 
 // allocateResources allocates resources for the table. It creates a page directory
 // for the table and writes an initial page to the disk. The initial page is
@@ -261,36 +270,26 @@ func (d *DiskManager) WritePage(page Page) error {
 	return d.DataFile.Sync()
 }
 
+// ------------------------------------------------------------------Metadata Operations for Create Table ------------------------------------------------------------------
+
 // writeMetaDataWithRetry writes the table's metadata to the metadata file
 // associated with the provided DiskManager with a retry mechanism. It first
 // attempts to write the metadata using WriteMetaData. If it fails, it retries
 // the operation up to the number of times specified in the RetryConf using
 // RetryWriteMetaData. It returns an error if all retries fail.
 func (m *TableMetadata) writeMetaDataWithRetry(t *Table, d *DiskManager, r *RetryConf) error {
-	err := m.WriteMetaData(t, d)
+	err := m.WriteCreateTableMetaData(t, d)
 	if err != nil {
-		return m.RetryWriteMetaData(t, d, r)
+		return m.RetryWriteCreateTableMetaData(t, d, r)
 	}
 	return nil
 }
 
-// writeCreateTableLogWithRetry writes the create table log to the log file
-// associated with the provided DiskManager with retry mechanism. If the
-// write fails, it retries up to the number of times specified in the RetryConf.
-// If all retries fail, it returns an error.
-func (l *TransactionLog) writeCreateTableLogWithRetry(t *Table, d *DiskManager, r *RetryConf) error {
-	err := l.WriteCreateTableLog(t, d)
-	if err != nil {
-		return l.RetryWriteCreateTableLog(t, d, r)
-	}
-	return nil
-}
-
-// WriteMetaData writes the table's metadata to the metadata file associated with the
+// WriteCreateTableMetaData writes the table's metadata to the metadata file associated with the
 // provided DiskManager. It writes the table's ID, name, columns, size, and row count
 // to the file in the format specified in TableFormat. It returns an error if writing
 // to the file fails.
-func (m *TableMetadata) WriteMetaData(t *Table, d *DiskManager) error {
+func (m *TableMetadata) WriteCreateTableMetaData(t *Table, d *DiskManager) error {
 	_, err := d.MetaDataFile.Seek(0, io.SeekEnd)
 	if err != nil {
 		return errSeekingFile
@@ -331,13 +330,30 @@ func (m *TableMetadata) WriteMetaData(t *Table, d *DiskManager) error {
 	return nil
 }
 
+// RetryWriteCreateTableMetaData retries writing the table's metadata, including its name, columns, size,
+// and row count, to the metadata file associated with the provided DiskManager up to the
+// number of times specified in the RetryConf. If all retries fail, it returns an error.
+func (m *TableMetadata) RetryWriteCreateTableMetaData(t *Table, d *DiskManager, r *RetryConf) error {
+	start := time.Now()
+	count := 0
+	for time.Since(start) < r.Interval*time.Duration(r.MaxRetries) {
+		err := m.WriteCreateTableMetaData(t, d)
+		if err == nil {
+			return nil
+		}
+		count++
+		time.Sleep(r.Interval)
+	}
+	return errWritingMetaData
+}
+
 // ReadMetaData reads the table metadata from the metadata file associated with
 // the provided DiskManager. It iterates over the file, reading each table's
 // metadata and unmarshalling it into a TableFormat object. Each valid table's
 // metadata is converted into a map with keys "Name", "Size", "RowsCount", and
 // "Columns", and added to a slice of maps. If no valid table metadata is found,
 // it returns an error. If reading from the file fails, it returns an error.
-func (m *TableMetadata) ReadMetaData(d *DiskManager) ([]map[string]interface{}, error) {
+func (m *TableMetadata) ReadTableMetaData(d *DiskManager) ([]map[string]interface{}, error) {
 	var offset int64
 	tables := make([]map[string]interface{}, 0)
 
@@ -389,56 +405,18 @@ func (m *TableMetadata) ReadMetaData(d *DiskManager) ([]map[string]interface{}, 
 	return tables, nil
 }
 
-// isTableExists checks if a table with the given name exists in the metadata.
-// It reads the metadata using the provided DiskManager and returns true if
-// a table with the specified name is found, or false otherwise. If an error
-// occurs while reading metadata, it returns false.
-func (m *TableMetadata) isTableExists(name string, d *DiskManager) bool {
-	metadata, err := m.ReadMetaData(d)
+// ------------------------------------------------------------------Log Operations for Create Table ------------------------------------------------------------------
+
+// writeCreateTableLogWithRetry writes the create table log to the log file
+// associated with the provided DiskManager with retry mechanism. If the
+// write fails, it retries up to the number of times specified in the RetryConf.
+// If all retries fail, it returns an error.
+func (l *TransactionLog) writeCreateTableLogWithRetry(t *Table, d *DiskManager, r *RetryConf) error {
+	err := l.WriteCreateTableLog(t, d)
 	if err != nil {
-		return false
+		return l.RetryWriteCreateTableLog(t, d, r)
 	}
-
-	for _, table := range metadata {
-		if table["Name"] == name {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *TableMetadata) isColumnExists(name string, d *DiskManager) bool {
-	metadata, err := m.ReadMetaData(d)
-	if err != nil {
-		return false
-	}
-
-	for _, table := range metadata {
-		columns := table["Columns"].([]string)
-		for _, column := range columns {
-			if column == name {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// RetryWriteMetaData retries writing the table's metadata, including its name, columns, size,
-// and row count, to the metadata file associated with the provided DiskManager up to the
-// number of times specified in the RetryConf. If all retries fail, it returns an error.
-func (m *TableMetadata) RetryWriteMetaData(t *Table, d *DiskManager, r *RetryConf) error {
-	start := time.Now()
-	count := 0
-	for time.Since(start) < r.Interval*time.Duration(r.MaxRetries) {
-		err := m.WriteMetaData(t, d)
-		if err == nil {
-			return nil
-		}
-		count++
-		time.Sleep(r.Interval)
-	}
-	return errWritingMetaData
+	return nil
 }
 
 // WriteCreateTableLog writes the create table log to the log file associated with the
@@ -501,4 +479,45 @@ func (l *TransactionLog) generateTransactionLogId() uint64 {
 	rand.Seed(time.Now().UnixNano())
 	randomUint64 := rand.Uint64()
 	return randomUint64
+}
+
+// ----------------------------------------------------------------------------Utility Functions for table and its metadata --------------------------------------------------------
+
+// isTableExists checks if a table with the given name exists in the metadata.
+// It reads the metadata using the provided DiskManager and returns true if
+// a table with the specified name is found, or false otherwise. If an error
+// occurs while reading metadata, it returns false.
+func (m *TableMetadata) isTableExists(name string, d *DiskManager) bool {
+	metadata, err := m.ReadTableMetaData(d)
+	if err != nil {
+		return false
+	}
+
+	for _, table := range metadata {
+		if table["Name"] == name {
+			return true
+		}
+	}
+	return false
+}
+
+// isColumnExists checks if a column with the given name exists in any table in the metadata.
+// It reads the metadata using the provided DiskManager and returns true if
+// a column with the specified name is found, or false otherwise. If an error
+// occurs while reading metadata, it returns false.
+func (m *TableMetadata) isColumnExists(name string, d *DiskManager) bool {
+	metadata, err := m.ReadTableMetaData(d)
+	if err != nil {
+		return false
+	}
+
+	for _, table := range metadata {
+		columns := table["Columns"].([]string)
+		for _, column := range columns {
+			if column == name {
+				return true
+			}
+		}
+	}
+	return false
 }

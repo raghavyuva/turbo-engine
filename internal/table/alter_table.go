@@ -148,7 +148,7 @@ func (t *AlterTable) SetUpdatedColumnDataTypes(columns []Column) {
 // and writes the updated metadata back to the disk. It returns an error if
 // reading or writing the metadata fails.
 func (at *AlterTable) DeleteColumns(m *TableMetadata, d *DiskManager, t *Table) error {
-	metadata, err := m.ReadMetaData(d)
+	metadata, err := m.ReadTableMetaData(d)
 	if err != nil {
 		return err
 	}
@@ -166,7 +166,7 @@ func (at *AlterTable) DeleteColumns(m *TableMetadata, d *DiskManager, t *Table) 
 			}
 		}
 	}
-	err = m.WriteMetaData(t, d)
+	err = m.WriteCreateTableMetaData(t, d)
 	if err != nil {
 		return err
 	}
