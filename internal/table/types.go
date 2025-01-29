@@ -68,6 +68,18 @@ type Column struct {
 	DefaultValue    string
 }
 
+func NewColumn(name string, dataType DataTypes, isNullable bool, isPrimaryKey bool, isUnique bool, isAutoIncrement bool, defaultValue string) *Column {
+	return &Column{
+		Name:            name,
+		DataType:        dataType,
+		IsNullable:      isNullable,
+		IsPrimaryKey:    isPrimaryKey,
+		IsUnique:        isUnique,
+		IsAutoIncrement: isAutoIncrement,
+		DefaultValue:    defaultValue,
+	}
+}
+
 type DiskManager struct {
 	PageSize     uint64
 	DataFile     *os.File
@@ -113,6 +125,17 @@ type Table struct {
 
 	sync.RWMutex // to lock the table
 	isLocked     bool
+}
+
+func NewTable(name string, columns []Column, pageDirectory *PageDirectory, Size, RowsCount uint64) *Table {
+	return &Table{
+		ID:            uuid.New(),
+		Name:          name,
+		Columns:       columns,
+		Size:          Size,
+		RowsCount:     RowsCount,
+		pageDirectory: pageDirectory,
+	}
 }
 
 type RetryConf struct {

@@ -7,16 +7,19 @@ import (
 
 func main() {
 	table := &internal.Table{
-		Name:    "users",
-		Columns: []internal.Column{{Name: "id", DataType: internal.Int}, {Name: "name", DataType: internal.String}},
+		Name: "users",
+		Columns: []internal.Column{
+			{Name: "id", DataType: internal.Int}, {Name: "name", DataType: internal.String, IsNullable: true},
+			{Name: "email", DataType: internal.String, IsNullable: true,IsUnique: true},
+		},
 	}
 
 	anotherTable := &internal.Table{
 		Name: "products",
 		Columns: []internal.Column{
-			{Name: "id", DataType: internal.Int},
-			{Name: "name", DataType: internal.String},
-			{Name: "price", DataType: internal.Int},
+			{Name: "id", DataType: internal.Int, IsPrimaryKey: true, IsNullable: true, IsAutoIncrement: true, IsUnique: false},
+			{Name: "name", DataType: internal.String, IsPrimaryKey: false, IsNullable: false, IsAutoIncrement: false, IsUnique: false},
+			{Name: "price", DataType: internal.Int, IsPrimaryKey: false, IsNullable: false, IsAutoIncrement: false, IsUnique: false, DefaultValue: "0"},
 		},
 	}
 	metadata := internal.NewMetaData()
