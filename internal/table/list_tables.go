@@ -1,4 +1,4 @@
-package internal
+package table
 
 // ListAllTables retrieves all tables' metadata from the disk and returns them
 // as a slice of Table objects. It reads the metadata using the provided
@@ -11,6 +11,7 @@ func (m *TableMetadata) ListAllTables(d *DiskManager) ([]*Table, error) {
 		return nil, err
 	}
 	for _, table := range metadata {
+		// TODO: add columns and other fields
 		t := NewTable(table["Name"].(string), nil, nil, uint64(table["Size"].(int)), uint64(table["RowsCount"].(int)))
 		tables = append(tables, t)
 	}

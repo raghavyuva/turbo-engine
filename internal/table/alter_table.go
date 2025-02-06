@@ -1,4 +1,4 @@
-package internal
+package table
 
 import (
 	"errors"
@@ -11,11 +11,11 @@ var (
 	errColumnDoesNotExist  = errors.New("column does not exist")
 )
 
-func (t *AlterTable) AlterTable(Name string, DeletedColumns []string, AddedColumns []Column, RenamedColumns []RenamedColumns, UpdatedColumnDataTypes []Column) error {
+func (t *AlterTable) AlterTable(Name string, DeletedColumns []string, AddedColumns []Column, RenamedColumns []RenamedColumns, UpdatedColumnDataTypes []Column, d *DiskManager, m *TableMetadata) error {
 
 	setAlterTable(t, Name, DeletedColumns, AddedColumns, RenamedColumns, UpdatedColumnDataTypes)
 
-	err := t.ValidateAlterTable(NewMetaData(), NewDiskManager())
+	err := t.ValidateAlterTable(m, d)
 	if err != nil {
 		fmt.Printf("Error validating while altering table: %v\n", err)
 		return err

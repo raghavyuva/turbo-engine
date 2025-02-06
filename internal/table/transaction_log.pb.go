@@ -4,7 +4,7 @@
 // 	protoc        v5.29.3
 // source: transaction_log.proto
 
-package internal
+package table
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"

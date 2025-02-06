@@ -1,4 +1,4 @@
-package internal
+package table
 
 import (
 	"encoding/binary"
@@ -347,6 +347,7 @@ func (m *TableMetadata) RetryWriteCreateTableMetaData(t *Table, d *DiskManager, 
 	return errWritingMetaData
 }
 
+// TODO - This should be optimal for read heavy calls, or when there are too many tables in the disk
 // ReadMetaData reads the table metadata from the metadata file associated with
 // the provided DiskManager. It iterates over the file, reading each table's
 // metadata and unmarshalling it into a TableFormat object. Each valid table's
